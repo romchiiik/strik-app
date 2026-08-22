@@ -1,0 +1,10 @@
+{
+  "name": "habit-app-webhook",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Serverless webhook-обработчик Telegram-бота для Vercel — сама функция запускается только когда приходит апдейт от Telegram, без постоянно работающего процесса.",
+  "dependencies": {
+    "telegraf": "^4.16.3"
+  }
+}

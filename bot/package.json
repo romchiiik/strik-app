@@ -1,0 +1,15 @@
+{
+  "name": "habit-app-bot",
+  "version": "1.0.0",
+  "description": "Telegram-бот, открывающий мини-апп «Привычки»",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "telegraf": "^4.16.3"
+  }
+}

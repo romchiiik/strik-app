@@ -176,3 +176,38 @@ export function StarIcon(props) {
     </svg>
   );
 }
+
+export function TrashIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M4 7h16M9 7V4.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V7M6 7l1 13a1.5 1.5 0 0 0 1.5 1.4h7A1.5 1.5 0 0 0 17 20l1-13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function InfoIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M12 11v5.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="12" cy="8.3" r="1.05" fill="currentColor" />
+    </svg>
+  );
+}
+
+export function XIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function SatelliteIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="8.2" y="8.2" width="7.6" height="7.6" rx="1.4" transform="rotate(45 12 12)" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}

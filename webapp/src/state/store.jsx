@@ -1,11 +1,60 @@
 import { createContext, useContext, useEffect, useMemo, useReducer } from "react";
 
-const STORAGE_KEY = "habit-app-state-v1";
+const STORAGE_KEY = "habit-app-state-v2";
+
+// --- Даты и стрики -----------------------------------------------------
+// Вся логика стриков считается "на лету" из истории отметок, а не хранится
+// готовым числом — так счётчики никогда не расходятся с реальными действиями
+// пользователя и переживают переход через полночь без миграций.
+
+export function todayKey(d = new Date()) {
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+export function daysBetween(fromKey, toKey) {
+  const a = new Date(fromKey + "T00:00:00Z");
+  const b = new Date(toKey + "T00:00:00Z");
+  return Math.max(0, Math.round((b - a) / 86400000));
+}
+
+// Стрик = число подряд идущих дней с отметкой, заканчивая сегодня
+// (или вчера, если сегодня ещё не отмечено — чтобы стрик не обнулялся
+// раньше времени в течение дня).
+export function computeStreak(doneMap) {
+  const done = new Set(Object.keys(doneMap || {}).filter((k) => doneMap[k]));
+  if (done.size === 0) return 0;
+  const cursor = new Date();
+  if (!done.has(todayKey(cursor))) {
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+  let streak = 0;
+  while (done.has(todayKey(cursor))) {
+    streak++;
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+  return streak;
+}
+
+export function computeCounterStreak(history, goal) {
+  const doneMap = Object.fromEntries(
+    Object.entries(history || {}).map(([k, v]) => [k, v >= goal])
+  );
+  return computeStreak(doneMap);
+}
+
+// Текущий стаж привычки, от которой избавляются (дней без срыва).
+export function quitDays(habit, todayK = todayKey()) {
+  return daysBetween(habit.startDate, todayK);
+}
+
+export function quitRecord(habit, todayK = todayKey()) {
+  return Math.max(habit.record || 0, quitDays(habit, todayK));
+}
 
 const initialState = {
   profile: {
     name: "Роман",
-    memberSince: "августа 2026",
+    memberSince: null, // проставляется один раз при первом запуске
   },
   settings: {
     theme: "auto", // "auto" | "light" | "dark"
@@ -13,43 +62,32 @@ const initialState = {
     units: "km-kg",
     weightKg: 75,
   },
-  schedule: [
-    { id: "wake", time: "07:00", title: "Подъём", subtitle: "Начало дня", icon: "sun", done: false },
-    { id: "work", time: "09:00", title: "Работа", subtitle: "До 18:00", icon: "briefcase", done: false },
-    { id: "run", time: "19:00", title: "Пробежка 5 км", subtitle: "Спорт", icon: "run", done: false },
-    { id: "meditate-block", time: "21:00", title: "Медитация 15 мин", subtitle: "Привычка", icon: "meditation", done: true, linkedHabit: "meditate" },
-    { id: "sleep", time: "23:00", title: "Сон", subtitle: "8 часов", icon: "moon", done: false },
-  ],
-  goodHabits: [
-    { id: "water", title: "Вода", icon: "droplet", kind: "counter", current: 5, goal: 8, streakDays: 21 },
-    { id: "read", title: "Чтение", icon: "book", kind: "toggle", doneToday: true, streakDays: 6, goalLabel: "20 минут" },
-    { id: "meditate", title: "Медитация", icon: "meditation", kind: "toggle", doneToday: true, streakDays: 12, goalLabel: "15 минут" },
-  ],
-  quitHabits: [
-    { id: "smoking", title: "Курение", days: 14, record: 21 },
-    { id: "alcohol", title: "Алкоголь", days: 30, record: 30 },
-  ],
-  activities: [
-    { id: 1, type: "run", label: "Пробежка", dateLabel: "Вчера, 19:04", distanceKm: 5.2, durationMin: 28 },
-    { id: 2, type: "bike", label: "Велопрогулка", dateLabel: "Четверг, 20:15", distanceKm: 11.2, durationMin: 42 },
-    { id: 3, type: "run", label: "Пробежка", dateLabel: "Вторник, 07:32", distanceKm: 4.0, durationMin: 22 },
-  ],
+  schedule: [],
+  goodHabits: [],
+  quitHabits: [],
+  activities: [],
 };
 
 function loadInitialState() {
   if (typeof window === "undefined") return initialState;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return initialState;
+    if (!raw) {
+      return { ...initialState, profile: { ...initialState.profile, memberSince: todayKey() } };
+    }
     const saved = JSON.parse(raw);
-    // Мелкая защита от повреждённых/старых данных — сливаем поверх дефолта.
-    return { ...initialState, ...saved };
+    const merged = { ...initialState, ...saved };
+    if (!merged.profile?.memberSince) {
+      merged.profile = { ...merged.profile, memberSince: todayKey() };
+    }
+    return merged;
   } catch {
-    return initialState;
+    return { ...initialState, profile: { ...initialState.profile, memberSince: todayKey() } };
   }
 }
 
 function reducer(state, action) {
+  const today = todayKey();
   switch (action.type) {
     case "TOGGLE_SCHEDULE":
       return {
@@ -65,34 +103,63 @@ function reducer(state, action) {
         schedule: [...state.schedule, action.item].sort((a, b) => a.time.localeCompare(b.time)),
       };
 
-    case "INCREMENT_WATER":
+    case "REMOVE_SCHEDULE_ITEM":
+      return { ...state, schedule: state.schedule.filter((i) => i.id !== action.id) };
+
+    case "INCREMENT_COUNTER_HABIT":
       return {
         ...state,
-        goodHabits: state.goodHabits.map((h) =>
-          h.id === "water" ? { ...h, current: Math.min(h.goal, h.current + 1) } : h
-        ),
+        goodHabits: state.goodHabits.map((h) => {
+          if (h.id !== action.id || h.kind !== "counter") return h;
+          const current = h.history?.[today] || 0;
+          if (current >= h.goal) return h;
+          return { ...h, history: { ...h.history, [today]: current + 1 } };
+        }),
       };
 
     case "TOGGLE_HABIT_DONE":
       return {
         ...state,
-        goodHabits: state.goodHabits.map((h) =>
-          h.id === action.id ? { ...h, doneToday: !h.doneToday } : h
-        ),
+        goodHabits: state.goodHabits.map((h) => {
+          if (h.id !== action.id || h.kind !== "toggle") return h;
+          const isDone = Boolean(h.history?.[today]);
+          return { ...h, history: { ...h.history, [today]: !isDone } };
+        }),
       };
+
+    case "ADD_GOOD_HABIT":
+      return {
+        ...state,
+        goodHabits: [
+          ...state.goodHabits,
+          { ...action.habit, history: {}, createdAt: today },
+        ],
+      };
+
+    case "REMOVE_GOOD_HABIT":
+      return { ...state, goodHabits: state.goodHabits.filter((h) => h.id !== action.id) };
+
+    case "ADD_QUIT_HABIT":
+      return {
+        ...state,
+        quitHabits: [
+          ...state.quitHabits,
+          { ...action.habit, startDate: today, record: 0 },
+        ],
+      };
+
+    case "REMOVE_QUIT_HABIT":
+      return { ...state, quitHabits: state.quitHabits.filter((h) => h.id !== action.id) };
 
     case "RESET_QUIT_HABIT":
       return {
         ...state,
         quitHabits: state.quitHabits.map((h) =>
           h.id === action.id
-            ? { ...h, record: Math.max(h.record, h.days), days: 0 }
+            ? { ...h, record: quitRecord(h, today), startDate: today }
             : h
         ),
       };
-
-    case "ADD_GOOD_HABIT":
-      return { ...state, goodHabits: [...state.goodHabits, action.habit] };
 
     case "ADD_ACTIVITY":
       return { ...state, activities: [action.activity, ...state.activities] };

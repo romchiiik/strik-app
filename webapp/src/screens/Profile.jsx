@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useStore } from "../state/store.jsx";
+import { useStore, computeStreak, computeCounterStreak, quitRecord } from "../state/store.jsx";
 import { getTelegramUser, isInsideTelegram, haptic } from "../telegram.js";
 import {
   BellIcon,
@@ -14,6 +14,12 @@ import {
 const THEME_LABEL = { auto: "Как в Telegram", light: "Светлая", dark: "Тёмная" };
 const THEME_ORDER = ["auto", "light", "dark"];
 
+function formatMemberSince(key) {
+  if (!key) return "недавно";
+  const d = new Date(key + "T00:00:00Z");
+  return d.toLocaleDateString("ru-RU", { month: "long", year: "numeric" });
+}
+
 export default function Profile() {
   const { state, dispatch } = useStore();
   const { profile, goodHabits, quitHabits, activities, settings } = state;
@@ -22,11 +28,11 @@ export default function Profile() {
   const tgUser = getTelegramUser();
 
   const stats = useMemo(() => {
-    const bestStreak = Math.max(
-      0,
-      ...quitHabits.map((h) => h.record),
-      ...goodHabits.map((h) => h.streakDays)
+    const goodStreaks = goodHabits.map((h) =>
+      h.kind === "counter" ? computeCounterStreak(h.history, h.goal) : computeStreak(h.history)
     );
+    const quitStreaks = quitHabits.map((h) => quitRecord(h));
+    const bestStreak = Math.max(0, ...quitStreaks, ...goodStreaks);
     return {
       bestStreak,
       habitsCount: goodHabits.length + quitHabits.length,
@@ -49,6 +55,8 @@ export default function Profile() {
     }
   };
 
+  const displayName = tgUser?.first_name || profile.name;
+
   return (
     <div className="screen">
       <div style={{ padding: "22px 20px 6px 20px", flex: "0 0 auto" }}>
@@ -57,12 +65,16 @@ export default function Profile() {
 
       <div className="scroll">
         <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 20px 18px 20px" }}>
-          <div style={{ width: 64, height: 64, borderRadius: 32, background: "var(--card-2)", border: `2px solid ${accent}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 700, flex: "0 0 auto" }}>
-            {(tgUser?.first_name || profile.name)[0]}
+          <div style={{ width: 64, height: 64, borderRadius: 32, background: "var(--card-2)", border: `2px solid ${accent}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 700, flex: "0 0 auto", overflow: "hidden" }}>
+            {tgUser?.photo_url ? (
+              <img src={tgUser.photo_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            ) : (
+              displayName[0]
+            )}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-              <span style={{ fontSize: 17, fontWeight: 700 }}>{tgUser?.first_name || profile.name}</span>
+              <span style={{ fontSize: 17, fontWeight: 700 }}>{displayName}</span>
               {tgUser?.is_premium && (
                 <span style={{ display: "flex", alignItems: "center", gap: 3, background: "var(--card-2)", padding: "3px 8px 3px 6px", borderRadius: 10 }}>
                   <StarIcon style={{ width: 11, height: 11, color: accent }} />
@@ -70,7 +82,7 @@ export default function Profile() {
                 </span>
               )}
             </div>
-            <span className="faint" style={{ fontSize: 12.5 }}>В приложении с {profile.memberSince}</span>
+            <span className="faint" style={{ fontSize: 12.5 }}>В приложении с {formatMemberSince(profile.memberSince)}</span>
           </div>
         </div>
 

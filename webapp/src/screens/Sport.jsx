@@ -1,10 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../state/store.jsx";
 import { haptic } from "../telegram.js";
-import { RunIcon, BikeIcon } from "../icons.jsx";
+import { RunIcon, BikeIcon, InfoIcon } from "../icons.jsx";
 
 const ICONS = { run: RunIcon, bike: BikeIcon };
 const MET = { run: 9.8, bike: 6.5 };
+
+// Точку с точностью хуже этого порога (в метрах) в расчёт дистанции не берём —
+// это и есть источник "фантомного" движения на месте: у смартфонов точность GPS
+// в помещении/у зданий часто 30-100+ м, и наивное суммирование каждого чиха
+// координат превращается в километры за секунды стояния на месте.
+const ACCURACY_OK_M = 25;
+// Потолок правдоподобной скорости передвижения (бег/вело у обычного человека) —
+// отсекает единичные "прыжки" GPS даже при формально неплохой точности.
+const MAX_SPEED_MPS = 9.5; // ~34 км/ч
 
 function haversineKm(a, b) {
   const R = 6371;
@@ -31,6 +40,22 @@ function formatDuration(sec) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function capitalize(s) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function formatRelativeDate(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86400000);
+  const time = d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  if (diffDays === 0) return `Сегодня, ${time}`;
+  if (diffDays === 1) return `Вчера, ${time}`;
+  if (diffDays < 7) return `${capitalize(d.toLocaleDateString("ru-RU", { weekday: "long" }))}, ${time}`;
+  return `${d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" })}, ${time}`;
+}
+
 export default function Sport() {
   const { state, dispatch } = useStore();
   const { activities, settings } = state;
@@ -41,6 +66,7 @@ export default function Sport() {
   const [distanceKm, setDistanceKm] = useState(0);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [geoError, setGeoError] = useState(null);
+  const [gpsQuality, setGpsQuality] = useState("searching"); // "searching" | "good" | "weak"
 
   const watchIdRef = useRef(null);
   const lastPointRef = useRef(null);
@@ -48,8 +74,10 @@ export default function Sport() {
   const timerRef = useRef(null);
 
   const weekSummary = useMemo(() => {
-    const totalKm = activities.reduce((sum, a) => sum + a.distanceKm, 0);
-    return { count: activities.length, totalKm: totalKm.toFixed(1) };
+    const weekAgoMs = Date.now() - 7 * 86400000;
+    const inWeek = activities.filter((a) => new Date(a.date || a.dateLabel).getTime() >= weekAgoMs);
+    const totalKm = inWeek.reduce((sum, a) => sum + a.distanceKm, 0);
+    return { count: inWeek.length, totalKm: totalKm.toFixed(1) };
   }, [activities]);
 
   const calories = Math.round(MET[activityType] * settings.weightKg * (elapsedSec / 3600));
@@ -69,6 +97,7 @@ export default function Sport() {
     setGeoError(null);
     setDistanceKm(0);
     setElapsedSec(0);
+    setGpsQuality("searching");
     lastPointRef.current = null;
     startTimeRef.current = Date.now();
     setTracking(true);
@@ -76,15 +105,32 @@ export default function Sport() {
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
-        const point = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-        if (lastPointRef.current) {
-          const delta = haversineKm(lastPointRef.current, point);
-          // Отсекаем случайный "прыжок" GPS в состоянии покоя.
-          if (delta > 0.003) {
-            setDistanceKm((d) => d + delta);
+        const accuracy = pos.coords.accuracy ?? 9999;
+        const point = { lat: pos.coords.latitude, lon: pos.coords.longitude, t: pos.timestamp || Date.now() };
+
+        if (accuracy > ACCURACY_OK_M) {
+          // Точка слишком неточная — не используем её для дистанции и не
+          // сдвигаем "последнюю точку", чтобы следующий хороший фикс сравнивался
+          // с последней достоверной позицией, а не с шумом.
+          setGpsQuality("weak");
+          return;
+        }
+        setGpsQuality("good");
+
+        const prev = lastPointRef.current;
+        if (prev) {
+          const deltaKm = haversineKm(prev, point);
+          const deltaM = deltaKm * 1000;
+          const dtSec = Math.max(0.5, (point.t - prev.t) / 1000);
+          const speedMps = deltaM / dtSec;
+          // Минимальный сдвиг должен превышать суммарную погрешность обеих точек —
+          // иначе это просто дрожание сигнала на месте, а не реальное движение.
+          const noiseFloorM = Math.max(5, prev.accuracy * 0.6 + accuracy * 0.6);
+          if (deltaM > noiseFloorM && speedMps <= MAX_SPEED_MPS) {
+            setDistanceKm((d) => d + deltaKm);
           }
         }
-        lastPointRef.current = point;
+        lastPointRef.current = { ...point, accuracy };
       },
       (err) => setGeoError(err.message || "Не удалось получить доступ к геолокации."),
       { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 }
@@ -109,7 +155,7 @@ export default function Sport() {
           id: Date.now(),
           type: activityType,
           label: activityType === "run" ? "Пробежка" : "Велопрогулка",
-          dateLabel: now.toLocaleDateString("ru-RU", { weekday: "long", hour: "2-digit", minute: "2-digit" }),
+          date: now.toISOString(),
           distanceKm: Number(distanceKm.toFixed(2)),
           durationMin: Math.round(elapsedSec / 60),
         },
@@ -127,53 +173,44 @@ export default function Sport() {
       </div>
 
       <div className="scroll">
-        <div style={{ margin: "0 20px 16px 20px" }}>
+        <div style={{ margin: "0 20px 8px 20px" }}>
           <div className="card" style={{ position: "relative", height: 210, overflow: "hidden", borderRadius: 22, display: "flex", alignItems: "center", justifyContent: "center" }}>
             {tracking ? (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: 13, color: "var(--faint)" }}>Идёт запись маршрута…</span>
+                <span style={{ fontSize: 13, color: "var(--faint)" }}>
+                  {gpsQuality === "searching" ? "Ищем сигнал GPS…" : gpsQuality === "weak" ? "Слабый сигнал GPS" : "Идёт запись маршрута…"}
+                </span>
                 <span style={{ fontSize: 40, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{formatDuration(elapsedSec)}</span>
                 <span style={{ fontSize: 14 }} className="dim">{distanceKm.toFixed(2)} км</span>
               </div>
+            ) : activities[0] ? (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                <span className="faint" style={{ fontSize: 12.5 }}>Последняя активность</span>
+                <span style={{ fontSize: 28, fontWeight: 700 }}>{activities[0].distanceKm} км</span>
+                <span className="dim" style={{ fontSize: 13 }}>{activities[0].durationMin} мин</span>
+              </div>
             ) : (
-              <svg viewBox="0 0 350 210" style={{ width: "100%", height: "100%", display: "block" }}>
-                <rect x="0" y="0" width="350" height="210" fill="var(--map-bg)" />
-                <g stroke="var(--map-grid)" strokeWidth="1.5">
-                  <line x1="0" y1="35" x2="350" y2="35" />
-                  <line x1="0" y1="78" x2="350" y2="78" />
-                  <line x1="0" y1="122" x2="350" y2="122" />
-                  <line x1="0" y1="168" x2="350" y2="168" />
-                  <line x1="42" y1="0" x2="42" y2="210" />
-                  <line x1="96" y1="0" x2="96" y2="210" />
-                  <line x1="158" y1="0" x2="158" y2="210" />
-                  <line x1="222" y1="0" x2="222" y2="210" />
-                  <line x1="284" y1="0" x2="284" y2="210" />
-                </g>
-                <path
-                  d="M30,172 C82,150 58,102 118,92 C168,84 150,42 220,47 C270,50 258,112 312,96"
-                  fill="none"
-                  stroke={accent}
-                  strokeWidth="4.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <circle cx="30" cy="172" r="5.5" fill={accent} />
-                <circle cx="312" cy="96" r="9" fill="none" stroke={accent} strokeWidth="2" opacity="0.5" />
-                <circle cx="312" cy="96" r="4.5" fill={accent} />
-              </svg>
-            )}
-            {!tracking && activities[0] && (
-              <div style={{ position: "absolute", left: 12, bottom: 12, background: "var(--overlay)", padding: "7px 12px", borderRadius: 14, fontSize: 12.5, fontWeight: 600 }}>
-                {activities[0].distanceKm} км · {activities[0].durationMin} мин
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "0 24px", textAlign: "center" }}>
+                <span className="faint" style={{ fontSize: 13, lineHeight: 1.5 }}>
+                  Здесь появится карта маршрута после первой тренировки
+                </span>
               </div>
             )}
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 10, padding: "0 20px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 6, padding: "0 20px 6px 20px" }}>
+          <InfoIcon style={{ width: 13, height: 13, color: "var(--icon-dim)", marginTop: 1, flex: "0 0 auto" }} />
+          <span className="faint" style={{ fontSize: 11, lineHeight: 1.4 }}>
+            Дистанция считается по GPS прямо в приложении. Telegram-мини-приложения не имеют доступа к
+            Apple Health или Google Fit — данные не синхронизируются с Watch/часами автоматически.
+          </span>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 10, padding: "10px 20px 0 20px" }}>
           <div className="card-2" style={{ padding: 12, display: "flex", flexDirection: "column", gap: 4 }}>
             <span className="faint" style={{ fontSize: 11 }}>Дистанция</span>
-            <span style={{ fontSize: 17, fontWeight: 700 }}>{distanceKm.toFixed(1)} км</span>
+            <span style={{ fontSize: 17, fontWeight: 700 }}>{distanceKm.toFixed(2)} км</span>
           </div>
           <div className="card-2" style={{ padding: 12, display: "flex", flexDirection: "column", gap: 4 }}>
             <span className="faint" style={{ fontSize: 11 }}>Темп</span>
@@ -218,33 +255,42 @@ export default function Sport() {
           >
             {!tracking && <RunIcon style={{ width: 19, height: 19, color: "var(--on-accent)" }} />}
             <span style={{ fontSize: 15, fontWeight: 700, color: "var(--on-accent)" }}>
-              {tracking ? "Остановить" : "Начать пробежку"}
+              {tracking ? "Остановить" : activityType === "run" ? "Начать пробежку" : "Начать поездку"}
             </span>
           </button>
         </div>
 
         <div style={{ padding: "22px 20px 8px 20px", fontSize: 16, fontWeight: 600 }}>История</div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 9, padding: "0 20px 100px 20px" }}>
-          {activities.map((a) => {
-            const Icon = ICONS[a.type] || RunIcon;
-            return (
-              <div key={a.id} className="card" style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px" }}>
-                <div style={{ width: 36, height: 36, borderRadius: 18, background: "var(--card-2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "0 0 auto" }}>
-                  <Icon style={{ width: 17, height: 17, color: a.type === "run" ? accent : "var(--icon-neutral)" }} />
+        {activities.length === 0 ? (
+          <div className="card" style={{ margin: "0 20px 40px 20px", padding: 16 }}>
+            <span className="faint" style={{ fontSize: 13, lineHeight: 1.5 }}>
+              Пока пусто. Нажми «Начать пробежку» или «Начать поездку» и подожди, пока приложение
+              поймает сигнал GPS, — после остановки тренировка появится здесь.
+            </span>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 9, padding: "0 20px 100px 20px" }}>
+            {activities.map((a) => {
+              const Icon = ICONS[a.type] || RunIcon;
+              return (
+                <div key={a.id} className="card" style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px" }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 18, background: "var(--card-2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "0 0 auto" }}>
+                    <Icon style={{ width: 17, height: 17, color: a.type === "run" ? accent : "var(--icon-neutral)" }} />
+                  </div>
+                  <div style={{ flex: "1 1 auto" }}>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{a.label}</div>
+                    <div className="faint" style={{ fontSize: 12 }}>{a.date ? formatRelativeDate(a.date) : a.dateLabel}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{a.distanceKm} км</div>
+                    <div className="faint" style={{ fontSize: 11 }}>{a.durationMin} мин</div>
+                  </div>
                 </div>
-                <div style={{ flex: "1 1 auto" }}>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>{a.label}</div>
-                  <div className="faint" style={{ fontSize: 12 }}>{a.dateLabel}</div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{a.distanceKm} км</div>
-                  <div className="faint" style={{ fontSize: 11 }}>{a.durationMin} мин</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

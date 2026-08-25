@@ -49,15 +49,16 @@ export default function Profile() {
 
   const toggleReminders = () => {
     haptic("light");
-    if (!settings.remindersWanted) {
+    const next = !settings.remindersWanted;
+    if (next) {
       showAlert(
-        "Push-напоминания от бота (сообщение в Telegram в нужное время) ещё не подключены — " +
-          "это отдельная серверная часть, сейчас в разработке. Включаю флажок «хочу получать» — " +
-          "как только сервер напоминаний заработает, они начнут приходить автоматически, без " +
-          "дополнительных действий с твоей стороны."
+        "Готово — бот пришлёт сообщение в Telegram примерно во время каждой задачи из " +
+          "расписания на вкладке «Сегодня» (сервер проверяет расписание раз в ~5 минут, " +
+          "так что возможна небольшая задержка). Просто держи расписание актуальным — " +
+          "остальное сделает сервер."
       );
     }
-    dispatch({ type: "SET_REMINDERS_WANTED", value: !settings.remindersWanted });
+    dispatch({ type: "SET_REMINDERS_WANTED", value: next });
   };
 
   const editWeight = () => {
@@ -119,7 +120,7 @@ export default function Profile() {
           <Row
             icon={<BellIcon style={{ width: 19, height: 19, color: "var(--icon-neutral)" }} />}
             label="Уведомления"
-            value={settings.remindersWanted ? "Включены при запуске" : "Пока не настроены"}
+            value={settings.remindersWanted ? "Включены" : "Выключены"}
             onClick={toggleReminders}
             noDivider
           />

@@ -1,0 +1,21 @@
+name: Send reminders
+
+# Бесплатный "будильник" для напоминаний: Vercel Cron на бесплатном плане умеет
+# запускаться не чаще раза в день, а тут нужно примерно раз в 5 минут. GitHub Actions
+# просто дёргает эндпоинт на Vercel по расписанию — вся логика (кому и что слать)
+# живёт там, этот workflow ничего не решает сам.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call reminders cron endpoint
+        run: |
+          curl -sf -X POST "https://strik-app-nine.vercel.app/api/cron-reminders" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -o /dev/null -w "status: %{http_code}\n"

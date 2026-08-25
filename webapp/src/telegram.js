@@ -49,3 +49,14 @@ export async function biometricAuth() {
 export function isInsideTelegram() {
   return Boolean(tg);
 }
+
+// Нативный алерт Telegram (не блокирует поток, как браузерный window.alert,
+// и выглядит частью интерфейса, а не системным диалогом). Вне Telegram —
+// обычный window.alert как запасной вариант.
+export function showAlert(message) {
+  if (tg?.showAlert) {
+    tg.showAlert(message);
+  } else if (typeof window !== "undefined") {
+    window.alert(message);
+  }
+}

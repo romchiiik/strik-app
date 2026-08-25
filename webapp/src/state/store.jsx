@@ -61,7 +61,7 @@ const initialState = {
     accent: "#3D5AFE",
     units: "km-kg",
     weightKg: 75,
-    remindersWanted: false, // хочет ли человек push-напоминания от бота (сама доставка — отдельная бэкенд-часть)
+    remindersWanted: false, // хочет ли человек push-напоминания от бота — доставляются сервером (api/reminders.js + api/cron-reminders.js)
   },
   schedule: [],
   goodHabits: [],

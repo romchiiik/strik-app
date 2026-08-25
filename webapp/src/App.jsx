@@ -6,6 +6,7 @@ import Habits from "./screens/Habits.jsx";
 import Sport from "./screens/Sport.jsx";
 import Profile from "./screens/Profile.jsx";
 import { initTelegram, getTelegramColorScheme, onThemeChanged } from "./telegram.js";
+import { syncReminders } from "./reminderSync.js";
 
 function useEffectiveTheme(preference) {
   const [systemTheme, setSystemTheme] = useState(
@@ -45,6 +46,12 @@ function Shell() {
   useEffect(() => {
     initTelegram();
   }, []);
+
+  // Каждый раз, как меняется расписание или флажок "хочу напоминания" — отправляем
+  // актуальное состояние на сервер, чтобы бот знал, кому и когда напоминать.
+  useEffect(() => {
+    syncReminders(state.schedule, state.settings.remindersWanted);
+  }, [state.schedule, state.settings.remindersWanted]);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);

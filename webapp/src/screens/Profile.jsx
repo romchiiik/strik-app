@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useStore, computeStreak, computeCounterStreak, quitRecord } from "../state/store.jsx";
-import { getTelegramUser, isInsideTelegram, haptic } from "../telegram.js";
+import { getTelegramUser, isInsideTelegram, haptic, showAlert } from "../telegram.js";
 import {
   BellIcon,
   MoonIcon,
@@ -50,7 +50,7 @@ export default function Profile() {
   const toggleReminders = () => {
     haptic("light");
     if (!settings.remindersWanted) {
-      window.alert(
+      showAlert(
         "Push-напоминания от бота (сообщение в Telegram в нужное время) ещё не подключены — " +
           "это отдельная серверная часть, сейчас в разработке. Включаю флажок «хочу получать» — " +
           "как только сервер напоминаний заработает, они начнут приходить автоматически, без " +

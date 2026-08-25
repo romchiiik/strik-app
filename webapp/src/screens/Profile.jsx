@@ -47,6 +47,19 @@ export default function Profile() {
     dispatch({ type: "SET_THEME", theme: next });
   };
 
+  const toggleReminders = () => {
+    haptic("light");
+    if (!settings.remindersWanted) {
+      window.alert(
+        "Push-напоминания от бота (сообщение в Telegram в нужное время) ещё не подключены — " +
+          "это отдельная серверная часть, сейчас в разработке. Включаю флажок «хочу получать» — " +
+          "как только сервер напоминаний заработает, они начнут приходить автоматически, без " +
+          "дополнительных действий с твоей стороны."
+      );
+    }
+    dispatch({ type: "SET_REMINDERS_WANTED", value: !settings.remindersWanted });
+  };
+
   const editWeight = () => {
     const value = window.prompt("Твой вес (кг) — используется для расчёта калорий:", settings.weightKg);
     const num = Number(value);
@@ -103,7 +116,13 @@ export default function Profile() {
 
         <div style={{ padding: "22px 20px 8px 20px", fontSize: 13, fontWeight: 600 }} className="faint">ОБЩЕЕ</div>
         <div className="card" style={{ margin: "0 20px" }}>
-          <Row icon={<BellIcon style={{ width: 19, height: 19, color: "var(--icon-neutral)" }} />} label="Уведомления" noDivider />
+          <Row
+            icon={<BellIcon style={{ width: 19, height: 19, color: "var(--icon-neutral)" }} />}
+            label="Уведомления"
+            value={settings.remindersWanted ? "Включены при запуске" : "Пока не настроены"}
+            onClick={toggleReminders}
+            noDivider
+          />
           <Row
             icon={<MoonIcon style={{ width: 19, height: 19, color: "var(--icon-neutral)" }} />}
             label="Тема"

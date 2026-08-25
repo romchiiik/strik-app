@@ -4,7 +4,10 @@ import { haptic } from "../telegram.js";
 import { RunIcon, BikeIcon, InfoIcon } from "../icons.jsx";
 
 const ICONS = { run: RunIcon, bike: BikeIcon };
-const MET = { run: 9.8, bike: 6.5 };
+// Калории считаем от реально пройденной (GPS-подтверждённой) дистанции, а не от
+// секундомера — иначе счётчик тикает, даже если ты лежишь на диване с запущенным
+// таймером. Это приблизительная, но честная оценка: ккал на кг веса на км пути.
+const CAL_PER_KG_KM = { run: 1.03, bike: 0.42 };
 
 // Точку с точностью хуже этого порога (в метрах) в расчёт дистанции не берём —
 // это и есть источник "фантомного" движения на месте: у смартфонов точность GPS
@@ -80,7 +83,7 @@ export default function Sport() {
     return { count: inWeek.length, totalKm: totalKm.toFixed(1) };
   }, [activities]);
 
-  const calories = Math.round(MET[activityType] * settings.weightKg * (elapsedSec / 3600));
+  const calories = Math.round(CAL_PER_KG_KM[activityType] * settings.weightKg * distanceKm);
 
   useEffect(() => {
     return () => {

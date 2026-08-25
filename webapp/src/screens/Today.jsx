@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore, computeStreak, computeCounterStreak, quitDays } from "../state/store.jsx";
 import { haptic, getTelegramUser } from "../telegram.js";
+import { parseVoiceTasks } from "../voiceParser.js";
 import {
   MicIcon,
   FlameIcon,
@@ -44,7 +45,14 @@ export default function Today() {
 
   const [listening, setListening] = useState(false);
   const [draft, setDraft] = useState(null); // { title, time }
+  const [addedFlash, setAddedFlash] = useState(null); // текст временного уведомления
   const recognitionRef = useRef(null);
+
+  useEffect(() => {
+    if (!addedFlash) return;
+    const t = setTimeout(() => setAddedFlash(null), 3000);
+    return () => clearTimeout(t);
+  }, [addedFlash]);
 
   const chips = useMemo(() => {
     const quitChips = quitHabits.map((h) => ({
@@ -90,7 +98,33 @@ export default function Today() {
     recognition.onerror = () => setListening(false);
     recognition.onresult = (event) => {
       const text = event.results[0]?.[0]?.transcript;
-      if (text) setDraft({ title: capitalize(text), time: "12:00" });
+      if (!text) return;
+
+      const tasks = parseVoiceTasks(text);
+
+      if (tasks.length > 1) {
+        // Несколько задач в одной фразе — раскидываем сразу, без промежуточного
+        // подтверждения (под каждую редактировать форму неудобно). Время у
+        // каждой можно поправить/удалить прямо в списке расписания.
+        tasks.forEach((task) => {
+          dispatch({
+            type: "ADD_SCHEDULE_ITEM",
+            item: {
+              id: `voice-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              time: task.time,
+              title: task.title,
+              subtitle: "Из голосового ввода",
+              icon: task.icon,
+              done: false,
+            },
+          });
+        });
+        haptic("success");
+        setAddedFlash(`Добавлено задач: ${tasks.length}`);
+      } else {
+        // Одна задача — даём проверить/поправить время перед сохранением, как раньше.
+        setDraft({ title: tasks[0].title, time: tasks[0].time });
+      }
     };
 
     recognition.start();
@@ -157,6 +191,11 @@ export default function Today() {
               + добавить вручную
             </button>
           )}
+          {addedFlash && (
+            <div className="faint" style={{ fontSize: 12, padding: "8px 4px 0 4px", color: "var(--good)" }}>
+              ✓ {addedFlash} — время каждой можно поправить в списке ниже
+            </div>
+          )}
         </div>
 
         {draft && (
@@ -199,9 +238,11 @@ export default function Today() {
           <div className="card" style={{ margin: "0 20px", padding: 16, display: "flex", flexDirection: "column", gap: 8 }}>
             <span style={{ fontSize: 14.5, fontWeight: 600 }}>Расписание пока пустое</span>
             <span className="faint" style={{ fontSize: 13, lineHeight: 1.5 }}>
-              Нажми на микрофон выше и скажи, например: «Пробежка в 7 утра», или добавь дело вручную
-              кнопкой «+ добавить вручную». Открой вкладку «Привычки», чтобы завести привычки, которые
-              хочешь выработать или бросить, — их стрики появятся сами, как только начнёшь их отмечать.
+              Нажми на микрофон выше и скажи сразу несколько дел, например: «Пробежка в 7 утра, потом
+              работа в 10, и медитация вечером» — каждое станет отдельной задачей со своим временем.
+              Можно и одно дело, и вручную кнопкой «+ добавить вручную». Открой вкладку «Привычки»,
+              чтобы завести привычки, которые хочешь выработать или бросить, — их стрики появятся сами,
+              как только начнёшь их отмечать.
             </span>
           </div>
         )}

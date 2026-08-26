@@ -63,6 +63,17 @@ const initialState = {
     weightKg: 75,
     remindersWanted: false, // хочет ли человек push-напоминания от бота — доставляются сервером (api/reminders.js + api/cron-reminders.js)
   },
+  // Данные для вкладки "Диета": вводятся один раз в форме, дальше по ним считаются
+  // калории/БЖУ по стандартной формуле (Mifflin-St Jeor) — см. screens/Diet.jsx.
+  diet: {
+    heightCm: null,
+    age: null,
+    gender: "male", // "male" | "female" — нужен только как параметр формулы BMR
+    goalWeightKg: null,
+    goalType: "lose", // "lose" | "maintain" | "gain"
+    activityLevel: "moderate", // sedentary | light | moderate | active | very_active
+    preferences: [], // "vegetarian" | "vegan" | "no_gluten" | "no_dairy" | "budget" | "quick_meals"
+  },
   schedule: [],
   goodHabits: [],
   quitHabits: [],
@@ -176,6 +187,20 @@ function reducer(state, action) {
 
     case "SET_REMINDERS_WANTED":
       return { ...state, settings: { ...state.settings, remindersWanted: action.value } };
+
+    case "SET_DIET_FIELD":
+      return { ...state, diet: { ...state.diet, [action.field]: action.value } };
+
+    case "TOGGLE_DIET_PREFERENCE":
+      return {
+        ...state,
+        diet: {
+          ...state.diet,
+          preferences: state.diet.preferences.includes(action.pref)
+            ? state.diet.preferences.filter((p) => p !== action.pref)
+            : [...state.diet.preferences, action.pref],
+        },
+      };
 
     default:
       return state;

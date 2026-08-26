@@ -264,7 +264,21 @@ export default function Profile() {
                   </div>
 
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span className="faint" style={{ fontSize: 11.5 }}>Тело запроса (Request Body → JSON)</span>
+                    <span className="faint" style={{ fontSize: 11.5 }}>Ключ «token» — только значение, без кавычек и скобок</span>
+                    <div
+                      onClick={() => copyAndNotify(voiceToken, "Токен")}
+                      style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--card-2)", borderRadius: 10, padding: "9px 10px", cursor: "pointer" }}
+                    >
+                      <span style={{ flex: "1 1 auto", fontSize: 12, fontFamily: "monospace", wordBreak: "break-all" }}>{voiceToken}</span>
+                      <CopyIcon style={{ width: 15, height: 15, color: "var(--icon-dim)", flex: "0 0 auto" }} />
+                    </div>
+                    <span className="faint" style={{ fontSize: 11, lineHeight: 1.4 }}>
+                      В Shortcuts: поле «Ключ» → впиши <code>token</code>, в поле значения справа — нажми сюда, скопируй и вставь именно эту строку целиком, без фигурных скобок.
+                    </span>
+                  </div>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <span className="faint" style={{ fontSize: 11.5 }}>Целиком — если поле тела запроса одно на весь JSON</span>
                     <div
                       onClick={() => copyAndNotify(requestBodyTemplate, "Шаблон тела запроса")}
                       style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "var(--card-2)", borderRadius: 10, padding: "9px 10px", cursor: "pointer" }}
@@ -273,7 +287,8 @@ export default function Profile() {
                       <CopyIcon style={{ width: 15, height: 15, color: "var(--icon-dim)", flex: "0 0 auto" }} />
                     </div>
                     <span className="faint" style={{ fontSize: 11, lineHeight: 1.4 }}>
-                      Значение поля «text» после копирования замени в Shortcuts на переменную с результатом шага «Dictate Text».
+                      Нужен, только если в Shortcuts у тебя одно текстовое поле для всего JSON сразу (не отдельные «Ключ» / «Значение»).
+                      Если поля отдельные — используй блок выше, а не этот.
                     </span>
                   </div>
 

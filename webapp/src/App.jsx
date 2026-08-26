@@ -4,6 +4,7 @@ import TabBar from "./components/TabBar.jsx";
 import Today from "./screens/Today.jsx";
 import Habits from "./screens/Habits.jsx";
 import Sport from "./screens/Sport.jsx";
+import Diet from "./screens/Diet.jsx";
 import Profile from "./screens/Profile.jsx";
 import { initTelegram, getTelegramColorScheme, onThemeChanged, haptic } from "./telegram.js";
 import { syncReminders, pullReminders } from "./reminderSync.js";
@@ -93,6 +94,7 @@ function Shell() {
       {tab === "today" && <Today />}
       {tab === "habits" && <Habits />}
       {tab === "sport" && <Sport />}
+      {tab === "diet" && <Diet />}
       {tab === "profile" && <Profile />}
       <TabBar active={tab} onChange={setTab} accent={accent} />
     </div>

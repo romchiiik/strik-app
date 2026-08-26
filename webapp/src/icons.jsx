@@ -220,6 +220,15 @@ export function BoltIcon(props) {
   );
 }
 
+export function AppleIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M12 9.3c-3.2 0-5.7 2.4-5.7 6.2 0 3.4 2.2 6.8 4.3 6.8 1 0 1.3-.5 2.1-.5s1.1.5 2.1.5c2.1 0 4.6-3.4 4.6-7 0-3.5-2.4-5.9-5.1-5.9-.6 0-1.1.1-1.6.3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12.4 9.3V7c0-1.1.7-2.1 2.1-2.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function CopyIcon(props) {
   return (
     <svg {...base} {...props}>

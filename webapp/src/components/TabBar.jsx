@@ -1,9 +1,10 @@
-import { HomeIcon, TargetIcon, ActivityIcon, UserIcon } from "../icons.jsx";
+import { HomeIcon, TargetIcon, ActivityIcon, AppleIcon, UserIcon } from "../icons.jsx";
 
 const TABS = [
   { id: "today", label: "Сегодня", Icon: HomeIcon },
   { id: "habits", label: "Привычки", Icon: TargetIcon },
   { id: "sport", label: "Спорт", Icon: ActivityIcon },
+  { id: "diet", label: "Диета", Icon: AppleIcon },
   { id: "profile", label: "Профиль", Icon: UserIcon },
 ];
 

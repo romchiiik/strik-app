@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useState, useMemo } from "react";
 import { useStore, computeStreak, computeCounterStreak, quitRecord } from "../state/store.jsx";
 import { getTelegramUser, isInsideTelegram, haptic, showAlert } from "../telegram.js";
+import { getInitData } from "../reminderSync.js";
 import {
   BellIcon,
   MoonIcon,
@@ -9,7 +10,32 @@ import {
   UserIcon,
   ChevronRightIcon,
   StarIcon,
+  BoltIcon,
+  CopyIcon,
 } from "../icons.jsx";
+
+const VOICE_CAPTURE_URL = "https://strik-app-nine.vercel.app/api/voice-capture";
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
 
 const THEME_LABEL = { auto: "Как в Telegram", light: "Светлая", dark: "Тёмная" };
 const THEME_ORDER = ["auto", "light", "dark"];
@@ -67,6 +93,49 @@ export default function Profile() {
     if (value && Number.isFinite(num) && num > 20 && num < 300) {
       dispatch({ type: "SET_WEIGHT", weightKg: Math.round(num) });
     }
+  };
+
+  const [actionButtonOpen, setActionButtonOpen] = useState(false);
+  const [voiceToken, setVoiceToken] = useState(null);
+  const [tokenState, setTokenState] = useState("idle"); // idle | loading | error
+
+  const loadVoiceToken = async (regenerate = false) => {
+    const initData = getInitData();
+    if (!initData) {
+      setTokenState("error");
+      return;
+    }
+    setTokenState("loading");
+    try {
+      const resp = await fetch("/api/voice-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData, regenerate }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data?.token) throw new Error("bad response");
+      setVoiceToken(data.token);
+      setTokenState("idle");
+    } catch {
+      setTokenState("error");
+    }
+  };
+
+  const toggleActionButtonPanel = () => {
+    haptic("light");
+    const next = !actionButtonOpen;
+    setActionButtonOpen(next);
+    if (next && !voiceToken) loadVoiceToken();
+  };
+
+  const requestBodyTemplate = voiceToken
+    ? JSON.stringify({ token: voiceToken, text: "Текст из шага «Dictate Text»" }, null, 2)
+    : "";
+
+  const copyAndNotify = async (text, label) => {
+    haptic("light");
+    const ok = await copyToClipboard(text);
+    showAlert(ok ? `${label} скопирован(о).` : `Не получилось скопировать автоматически. ${label}: ${text}`);
   };
 
   const displayName = tgUser?.first_name || profile.name;
@@ -149,6 +218,75 @@ export default function Profile() {
               <div className="faint" style={{ fontSize: 12 }}>Кнопка на экране «Сегодня»</div>
             </div>
           </div>
+          <div
+            onClick={toggleActionButtonPanel}
+            style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 16px", minHeight: 44, borderTop: "1px solid var(--card-border)", cursor: "pointer" }}
+          >
+            <div style={{ width: 32, height: 32, borderRadius: 16, background: "var(--card-2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "0 0 auto" }}>
+              <BoltIcon style={{ width: 15, height: 15, color: "var(--icon-neutral)" }} />
+            </div>
+            <div style={{ flex: "1 1 auto" }}>
+              <div style={{ fontSize: 14.5 }}>Action Button (iPhone)</div>
+              <div className="faint" style={{ fontSize: 12 }}>Надиктовать задачи не открывая приложение</div>
+            </div>
+            <ChevronRightIcon
+              style={{ width: 16, height: 16, color: "var(--icon-dim)", transform: actionButtonOpen ? "rotate(90deg)" : "none" }}
+            />
+          </div>
+
+          {actionButtonOpen && (
+            <div style={{ padding: "4px 16px 16px 16px", borderTop: "1px solid var(--card-border)", display: "flex", flexDirection: "column", gap: 12 }}>
+              <span className="faint" style={{ fontSize: 12.5, lineHeight: 1.5, paddingTop: 10 }}>
+                Настраивается один раз через приложение «Команды» (Shortcuts) — жмёшь Action Button,
+                айфон надиктовывает текст, и он сразу приходит сюда и превращается в задачи расписания
+                (плюс бот пришлёт подтверждение в чат). Ниже — данные для двух шагов настройки; сама
+                инструкция — в чате с Клодом, который это подключал.
+              </span>
+
+              {tokenState === "loading" && <span className="faint" style={{ fontSize: 12.5 }}>Получаю личный ключ…</span>}
+              {tokenState === "error" && (
+                <span className="faint" style={{ fontSize: 12.5, color: "var(--bad)" }}>
+                  Не получилось получить ключ. Открой этот экран из Telegram (не в браузере) и попробуй ещё раз.
+                </span>
+              )}
+
+              {voiceToken && (
+                <>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <span className="faint" style={{ fontSize: 11.5 }}>Адрес (URL) — Get Contents of URL, метод POST</span>
+                    <div
+                      onClick={() => copyAndNotify(VOICE_CAPTURE_URL, "Адрес")}
+                      style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--card-2)", borderRadius: 10, padding: "9px 10px", cursor: "pointer" }}
+                    >
+                      <span style={{ flex: "1 1 auto", fontSize: 12, fontFamily: "monospace", wordBreak: "break-all" }}>{VOICE_CAPTURE_URL}</span>
+                      <CopyIcon style={{ width: 15, height: 15, color: "var(--icon-dim)", flex: "0 0 auto" }} />
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <span className="faint" style={{ fontSize: 11.5 }}>Тело запроса (Request Body → JSON)</span>
+                    <div
+                      onClick={() => copyAndNotify(requestBodyTemplate, "Шаблон тела запроса")}
+                      style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "var(--card-2)", borderRadius: 10, padding: "9px 10px", cursor: "pointer" }}
+                    >
+                      <pre style={{ flex: "1 1 auto", fontSize: 11.5, fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>{requestBodyTemplate}</pre>
+                      <CopyIcon style={{ width: 15, height: 15, color: "var(--icon-dim)", flex: "0 0 auto" }} />
+                    </div>
+                    <span className="faint" style={{ fontSize: 11, lineHeight: 1.4 }}>
+                      Значение поля «text» после копирования замени в Shortcuts на переменную с результатом шага «Dictate Text».
+                    </span>
+                  </div>
+
+                  <button
+                    onClick={() => loadVoiceToken(true)}
+                    style={{ alignSelf: "flex-start", background: "none", border: "none", padding: 0, color: accent, fontSize: 12, fontWeight: 600 }}
+                  >
+                    Обновить ключ (если кому-то показал по ошибке)
+                  </button>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         <div style={{ padding: "22px 20px 8px 20px", fontSize: 13, fontWeight: 600 }} className="faint">АККАУНТ</div>

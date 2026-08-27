@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore, computeStreak, computeCounterStreak, quitDays } from "../state/store.jsx";
 import { haptic, getTelegramUser } from "../telegram.js";
 import { parseVoiceTasks } from "../voiceParser.js";
+import { getInitData } from "../reminderSync.js";
 import {
   MicIcon,
   FlameIcon,
@@ -44,6 +45,7 @@ export default function Today() {
   const tgUser = getTelegramUser();
 
   const [listening, setListening] = useState(false);
+  const [processing, setProcessing] = useState(false); // ждём разбор фразы ИИ-эндпоинтом
   const [draft, setDraft] = useState(null); // { title, time }
   const [addedFlash, setAddedFlash] = useState(null); // текст временного уведомления
   const recognitionRef = useRef(null);
@@ -96,38 +98,68 @@ export default function Today() {
     recognition.onstart = () => setListening(true);
     recognition.onend = () => setListening(false);
     recognition.onerror = () => setListening(false);
-    recognition.onresult = (event) => {
+    recognition.onresult = async (event) => {
       const text = event.results[0]?.[0]?.transcript;
       if (!text) return;
 
-      const tasks = parseVoiceTasks(text);
+      setProcessing(true);
+      const tasks = await parseTasksViaAI(text);
+      setProcessing(false);
 
-      if (tasks.length > 1) {
-        // Несколько задач в одной фразе — раскидываем сразу, без промежуточного
-        // подтверждения (под каждую редактировать форму неудобно). Время у
-        // каждой можно поправить/удалить прямо в списке расписания.
-        tasks.forEach((task) => {
-          dispatch({
-            type: "ADD_SCHEDULE_ITEM",
-            item: {
-              id: `voice-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              time: task.time,
-              title: task.title,
-              subtitle: "Из голосового ввода",
-              icon: task.icon,
-              done: false,
-            },
-          });
-        });
-        haptic("success");
-        setAddedFlash(`Добавлено задач: ${tasks.length}`);
-      } else {
-        // Одна задача — даём проверить/поправить время перед сохранением, как раньше.
-        setDraft({ title: tasks[0].title, time: tasks[0].time });
-      }
+      applyParsedTasks(tasks);
     };
 
     recognition.start();
+  };
+
+  // Пробуем разобрать фразу через серверный ИИ-эндпоинт (понимает суть даже
+  // в потоке речи с "водой") — а если нет сети/initData/ключа на сервере, тихо
+  // откатываемся на локальный разбор по правилам, чтобы голосовой ввод не ломался.
+  const parseTasksViaAI = async (text) => {
+    const initData = getInitData();
+    if (!initData) return parseVoiceTasks(text);
+
+    try {
+      const resp = await fetch("/api/parse-voice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData, text }),
+      });
+      if (!resp.ok) return parseVoiceTasks(text);
+      const data = await resp.json();
+      if (Array.isArray(data?.tasks) && data.tasks.length > 0) return data.tasks;
+      return parseVoiceTasks(text);
+    } catch {
+      return parseVoiceTasks(text);
+    }
+  };
+
+  const applyParsedTasks = (tasks) => {
+    if (!tasks || tasks.length === 0) return;
+
+    if (tasks.length > 1) {
+      // Несколько задач в одной фразе — раскидываем сразу, без промежуточного
+      // подтверждения (под каждую редактировать форму неудобно). Время у
+      // каждой можно поправить/удалить прямо в списке расписания.
+      tasks.forEach((task) => {
+        dispatch({
+          type: "ADD_SCHEDULE_ITEM",
+          item: {
+            id: `voice-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            time: task.time,
+            title: task.title,
+            subtitle: "Из голосового ввода",
+            icon: task.icon,
+            done: false,
+          },
+        });
+      });
+      haptic("success");
+      setAddedFlash(`Добавлено задач: ${tasks.length}`);
+    } else {
+      // Одна задача — даём проверить/поправить время перед сохранением, как раньше.
+      setDraft({ title: tasks[0].title, time: tasks[0].time });
+    }
   };
 
   const stopVoice = () => {
@@ -176,17 +208,17 @@ export default function Today() {
         <div style={{ margin: "16px 20px 6px 20px" }}>
           <div
             className="card"
-            style={{ height: 56, display: "flex", alignItems: "center", gap: 12, padding: "0 8px", borderRadius: 28, cursor: "pointer" }}
-            onClick={listening ? stopVoice : startVoice}
+            style={{ height: 56, display: "flex", alignItems: "center", gap: 12, padding: "0 8px", borderRadius: 28, cursor: processing ? "default" : "pointer", opacity: processing ? 0.7 : 1 }}
+            onClick={processing ? undefined : listening ? stopVoice : startVoice}
           >
             <div style={{ width: 40, height: 40, borderRadius: 20, background: listening ? "var(--bad)" : accent, display: "flex", alignItems: "center", justifyContent: "center", flex: "0 0 auto" }}>
               <MicIcon style={{ width: 19, height: 19, color: "var(--on-accent)" }} />
             </div>
             <span className="dim" style={{ fontSize: 15 }}>
-              {listening ? "Слушаю… нажми, чтобы остановить" : "Скажи, что нужно сделать"}
+              {processing ? "Понимаю, что ты сказал…" : listening ? "Слушаю… нажми, чтобы остановить" : "Скажи, что нужно сделать"}
             </span>
           </div>
-          {!listening && (
+          {!listening && !processing && (
             <button onClick={openManualAdd} style={{ background: "none", border: "none", padding: "8px 4px 0 4px", color: accent, fontSize: 12.5, fontWeight: 600 }}>
               + добавить вручную
             </button>

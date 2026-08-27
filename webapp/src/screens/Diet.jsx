@@ -1,12 +1,21 @@
 // Вкладка "Диета": человек один раз вводит рост/возраст/пол/активность/цель по весу
-// и отмечает пищевые предпочтения — дальше приложение считает целевые калории и БЖУ
-// по стандартной формуле (Mifflin-St Jeor) и даёт текстовые рекомендации по питанию
-// и тренировкам. Никаких готовых меню/программ по дням — только цифры и принципы,
-// плюс явная оговорка, что это не медицинская рекомендация.
+// и отмечает пищевые предпочтения — приложение считает целевые калории и БЖУ по
+// стандартной формуле (Mifflin-St Jeor), это неизменный, надёжный фундамент.
+//
+// Сверху на эти цифры можно "включить" ИИ-тренера (api/diet-coach.js): по кнопке —
+// не автоматически на каждое изменение поля, чтобы не жечь деньги впустую — модель
+// пишет живой персональный разбор (мотивация/принципы питания/тренировки/идеи блюд)
+// под конкретный профиль. Пока ИИ не запрошен или недоступен, показываются обычные
+// статические рекомендации (buildNutritionPrinciples/buildWorkoutPrinciple) — экран
+// никогда не остаётся пустым и не ломается без ключа ИИ на сервере.
+//
+// Плюс — история веса (diet.weightLog, пишется автоматически при каждом SET_WEIGHT,
+// см. state/store.jsx) с простым графиком прогресса.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useStore } from "../state/store.jsx";
 import { haptic } from "../telegram.js";
+import { getInitData } from "../reminderSync.js";
 import { FlameIcon, ChevronRightIcon, InfoIcon } from "../icons.jsx";
 
 const ACTIVITY_LEVELS = [
@@ -152,6 +161,76 @@ function buildWorkoutPrinciple(goalType) {
   return "Для поддержания формы достаточно 3–4 тренировок в неделю в любом формате, который нравится и который получается выполнять регулярно, — регулярность важнее идеальной программы. Смешивай кардио и силовые, чтобы держать и выносливость, и мышцы.";
 }
 
+// Отпечаток входных данных, под которые сгенерирован план ИИ-тренера — как только
+// что-то из этого поменялось, кэш в diet.aiPlan считается устаревшим (см. Diet()).
+function computeInputsHash(profile) {
+  return JSON.stringify([
+    profile.weightKg,
+    profile.heightCm,
+    profile.age,
+    profile.gender,
+    profile.activityLevel,
+    profile.goalType,
+    profile.goalWeightKg,
+    [...profile.preferences].sort(),
+  ]);
+}
+
+// Простой инлайн-график веса — без библиотек, ломаная линия по точкам weightLog.
+// Меньше двух точек рисовать нечего — просто подсказка, что график появится сам.
+function WeightSparkline({ entries, goalWeightKg, accent }) {
+  if (!entries || entries.length < 2) {
+    return (
+      <span className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>
+        Записывай вес время от времени — здесь появится график прогресса.
+      </span>
+    );
+  }
+
+  const width = 100; // проценты — растягивается вместе с карточкой через viewBox
+  const height = 40;
+  const padX = 4;
+  const padY = 6;
+
+  const weights = entries.map((e) => e.weightKg);
+  const values = goalWeightKg ? [...weights, goalWeightKg] : weights;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+
+  const points = entries.map((e, i) => {
+    const x = padX + (i / (entries.length - 1)) * (width - padX * 2);
+    const y = padY + (1 - (e.weightKg - min) / span) * (height - padY * 2);
+    return { x, y };
+  });
+
+  const path = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const goalY = goalWeightKg != null ? padY + (1 - (goalWeightKg - min) / span) * (height - padY * 2) : null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", height: 64 }} preserveAspectRatio="none">
+        {goalY != null && (
+          <line x1={0} y1={goalY} x2={width} y2={goalY} stroke="var(--icon-dim)" strokeWidth="0.6" strokeDasharray="2,2" />
+        )}
+        <path d={path} fill="none" stroke={accent} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        {points.map((p, i) => (
+          <circle key={i} cx={p.x} cy={p.y} r="1.4" fill={accent} />
+        ))}
+      </svg>
+      <div style={{ display: "flex", justifyContent: "space-between" }}>
+        <span className="faint" style={{ fontSize: 10.5 }}>{formatLogDate(entries[0].date)}</span>
+        <span className="faint" style={{ fontSize: 10.5 }}>{formatLogDate(entries[entries.length - 1].date)}</span>
+      </div>
+    </div>
+  );
+}
+
+function formatLogDate(dateKey) {
+  const d = new Date(`${dateKey}T00:00:00Z`);
+  return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+}
+
 export default function Diet() {
   const { state, dispatch } = useStore();
   const { settings, diet } = state;
@@ -217,6 +296,82 @@ export default function Diet() {
 
   const principles = useMemo(() => buildNutritionPrinciples(diet.goalType, diet.preferences), [diet.goalType, diet.preferences]);
   const workoutText = useMemo(() => buildWorkoutPrinciple(diet.goalType), [diet.goalType]);
+
+  // Отпечаток текущего профиля — как только он меняется, кэшированный план ИИ-тренера
+  // считается устаревшим (см. hasFreshAiPlan/isStaleAiPlan ниже), и экран предлагает
+  // обновить его заново, а не молча показывает разбор под старые цифры.
+  const inputsHash = useMemo(
+    () =>
+      computeInputsHash({
+        weightKg: settings.weightKg,
+        heightCm: diet.heightCm,
+        age: diet.age,
+        gender: diet.gender,
+        activityLevel: diet.activityLevel,
+        goalType: diet.goalType,
+        goalWeightKg: diet.goalWeightKg,
+        preferences: diet.preferences,
+      }),
+    [settings.weightKg, diet.heightCm, diet.age, diet.gender, diet.activityLevel, diet.goalType, diet.goalWeightKg, diet.preferences]
+  );
+
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState(null);
+
+  const hasFreshAiPlan = Boolean(diet.aiPlan && diet.aiPlan.forHash === inputsHash);
+  const isStaleAiPlan = Boolean(diet.aiPlan && diet.aiPlan.forHash !== inputsHash);
+
+  // По кнопке (не автоматически!) просим сервер сгенерировать живой персональный разбор —
+  // сервер сам откатится на ok:false, если ИИ недоступен, тогда просто оставляем статику.
+  const requestAiPlan = async () => {
+    if (!plan) return;
+    const initData = getInitData();
+    if (!initData) {
+      setAiError("ИИ-тренер работает только внутри Telegram — открой приложение через бота.");
+      return;
+    }
+
+    haptic("light");
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const resp = await fetch("/api/diet-coach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          initData,
+          profile: {
+            gender: diet.gender,
+            age: diet.age,
+            heightCm: diet.heightCm,
+            weightKg: settings.weightKg,
+            goalWeightKg: diet.goalWeightKg,
+            goalType: diet.goalType,
+            activityLevel: diet.activityLevel,
+            preferences: diet.preferences,
+          },
+          plan: { target: plan.target, proteinG: plan.proteinG, fatG: plan.fatG, carbsG: plan.carbsG },
+        }),
+      });
+
+      if (resp.status === 429) {
+        setAiError("Подожди немного и попробуй ещё раз.");
+        return;
+      }
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data?.ok) {
+        setAiError("Не получилось получить план от ИИ-тренера — попробуй чуть позже.");
+        return;
+      }
+
+      dispatch({ type: "SET_DIET_AI_PLAN", plan: { ...data.plan, forHash: inputsHash, generatedAt: Date.now() } });
+      haptic("success");
+    } catch {
+      setAiError("Нет связи с сервером — проверь интернет и попробуй снова.");
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   return (
     <div className="screen">
@@ -326,16 +481,93 @@ export default function Diet() {
               </span>
             </div>
 
-            <div style={{ padding: "20px 20px 8px 20px", fontSize: 16, fontWeight: 600 }}>Питание</div>
+            <div style={{ padding: "22px 20px 8px 20px", fontSize: 13, fontWeight: 600 }} className="faint">
+              ПРОГРЕСС
+            </div>
+            <div className="card" style={{ margin: "0 20px", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+              <WeightSparkline entries={diet.weightLog} goalWeightKg={diet.goalWeightKg} accent={accent} />
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                <span className="faint" style={{ fontSize: 12, lineHeight: 1.4 }}>
+                  {diet.goalWeightKg
+                    ? `До цели: ${Math.abs(settings.weightKg - diet.goalWeightKg)} кг`
+                    : "Укажи желаемый вес в цели, чтобы видеть, сколько осталось"}
+                </span>
+                <button
+                  onClick={setWeight}
+                  style={{ flex: "0 0 auto", background: "var(--card-2)", border: "none", borderRadius: 10, padding: "9px 13px", fontSize: 12.5, fontWeight: 600, color: "var(--text)" }}
+                >
+                  Записать вес
+                </button>
+              </div>
+            </div>
+
+            <div style={{ padding: "22px 20px 8px 20px", fontSize: 13, fontWeight: 600 }} className="faint">
+              ИИ-ТРЕНЕР
+            </div>
+            <div className="card" style={{ margin: "0 20px", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+              {hasFreshAiPlan ? (
+                <>
+                  <span style={{ fontSize: 13.5, lineHeight: 1.6, fontStyle: "italic" }}>{diet.aiPlan.motivation}</span>
+                  <button
+                    onClick={requestAiPlan}
+                    disabled={aiLoading}
+                    style={{ alignSelf: "flex-start", background: "none", border: "none", padding: 0, color: accent, fontSize: 12.5, fontWeight: 600 }}
+                  >
+                    {aiLoading ? "Обновляю…" : "Пересчитать план заново"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="faint" style={{ fontSize: 13, lineHeight: 1.5 }}>
+                    {isStaleAiPlan
+                      ? "Профиль изменился с прошлого раза — обнови персональный план у ИИ-тренера."
+                      : "Получи живой персональный разбор питания, тренировок и конкретные идеи блюд под именно твои цифры — как будто с настоящим тренером."}
+                  </span>
+                  <button
+                    onClick={requestAiPlan}
+                    disabled={aiLoading}
+                    style={{ background: accent, color: "var(--on-accent)", border: "none", borderRadius: 10, padding: "13px 0", fontWeight: 600, fontSize: 14, opacity: aiLoading ? 0.7 : 1 }}
+                  >
+                    {aiLoading ? "Спрашиваю у ИИ-тренера…" : "🔥 Получить план от ИИ-тренера"}
+                  </button>
+                </>
+              )}
+              {aiError && <span style={{ fontSize: 11.5, color: "var(--bad)", lineHeight: 1.4 }}>{aiError}</span>}
+            </div>
+
+            <div style={{ padding: "20px 20px 8px 20px", fontSize: 16, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+              Питание
+              {hasFreshAiPlan && <AiBadge accent={accent} />}
+            </div>
             <div className="card" style={{ margin: "0 20px", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-              {principles.map((p, i) => (
+              {(hasFreshAiPlan ? diet.aiPlan.nutrition : principles).map((p, i) => (
                 <span key={i} style={{ fontSize: 13.5, lineHeight: 1.5 }}>{p}</span>
               ))}
             </div>
 
-            <div style={{ padding: "20px 20px 8px 20px", fontSize: 16, fontWeight: 600 }}>Тренировки</div>
+            {hasFreshAiPlan && (
+              <>
+                <div style={{ padding: "20px 20px 8px 20px", fontSize: 16, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+                  Идеи блюд
+                  <AiBadge accent={accent} />
+                </div>
+                <div className="card" style={{ margin: "0 20px", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+                  {diet.aiPlan.mealIdeas.map((m, i) => (
+                    <div key={i} style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
+                      <span style={{ fontSize: 13, marginTop: 1, flex: "0 0 auto" }}>🍽️</span>
+                      <span style={{ fontSize: 13.5, lineHeight: 1.5 }}>{m}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <div style={{ padding: "20px 20px 8px 20px", fontSize: 16, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+              Тренировки
+              {hasFreshAiPlan && <AiBadge accent={accent} />}
+            </div>
             <div className="card" style={{ margin: "0 20px", padding: 16 }}>
-              <span style={{ fontSize: 13.5, lineHeight: 1.5 }}>{workoutText}</span>
+              <span style={{ fontSize: 13.5, lineHeight: 1.5 }}>{hasFreshAiPlan ? diet.aiPlan.workout : workoutText}</span>
             </div>
 
             <div style={{ display: "flex", alignItems: "flex-start", gap: 8, margin: "18px 20px 40px 20px" }}>
@@ -350,6 +582,14 @@ export default function Diet() {
         )}
       </div>
     </div>
+  );
+}
+
+function AiBadge({ accent }) {
+  return (
+    <span style={{ fontSize: 10, fontWeight: 700, color: accent, background: "var(--card-2)", padding: "2px 7px", borderRadius: 8, letterSpacing: "0.02em" }}>
+      ИИ
+    </span>
   );
 }
 

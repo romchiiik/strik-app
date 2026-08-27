@@ -73,6 +73,11 @@ const initialState = {
     goalType: "lose", // "lose" | "maintain" | "gain"
     activityLevel: "moderate", // sedentary | light | moderate | active | very_active
     preferences: [], // "vegetarian" | "vegan" | "no_gluten" | "no_dairy" | "budget" | "quick_meals"
+    weightLog: [], // [{ date: "YYYY-MM-DD", weightKg }] — история для графика прогресса
+    // Кэш последнего ответа ИИ-тренера (api/diet-coach.js) — чтобы не дёргать ИИ на каждый
+    // рендер и не тратить деньги за запрос впустую. forHash — отпечаток входных данных,
+    // под которые был сгенерирован план; экран сам решает, устарел ли он (см. Diet.jsx).
+    aiPlan: null, // { forHash, motivation, nutrition: [], workout, mealIdeas: [], generatedAt }
   },
   schedule: [],
   goodHabits: [],
@@ -92,6 +97,10 @@ function loadInitialState() {
     if (!merged.profile?.memberSince) {
       merged.profile = { ...merged.profile, memberSince: todayKey() };
     }
+    // diet — свой неглубокий мёрдж: у людей, кто пользовался "Диетой" до появления
+    // weightLog/aiPlan, saved.diet уже существует и иначе полностью перекрыл бы новые
+    // поля значениями undefined (WeightSparkline и т.п. упали бы на пустом месте).
+    merged.diet = { ...initialState.diet, ...(saved.diet || {}) };
     return merged;
   } catch {
     return { ...initialState, profile: { ...initialState.profile, memberSince: todayKey() } };
@@ -182,8 +191,22 @@ function reducer(state, action) {
     case "SET_ACCENT":
       return { ...state, settings: { ...state.settings, accent: action.accent } };
 
-    case "SET_WEIGHT":
-      return { ...state, settings: { ...state.settings, weightKg: action.weightKg } };
+    case "SET_WEIGHT": {
+      // Каждое обновление веса заодно ложится в историю (для графика прогресса в "Диете") —
+      // один апдейт в день перезаписывает запись на сегодня, а не плодит дубли.
+      const existingLog = (state.diet.weightLog || []).filter((e) => e.date !== today);
+      const weightLog = [...existingLog, { date: today, weightKg: action.weightKg }].sort((a, b) =>
+        a.date.localeCompare(b.date)
+      );
+      return {
+        ...state,
+        settings: { ...state.settings, weightKg: action.weightKg },
+        diet: { ...state.diet, weightLog },
+      };
+    }
+
+    case "SET_DIET_AI_PLAN":
+      return { ...state, diet: { ...state.diet, aiPlan: action.plan } };
 
     case "SET_REMINDERS_WANTED":
       return { ...state, settings: { ...state.settings, remindersWanted: action.value } };

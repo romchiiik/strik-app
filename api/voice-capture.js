@@ -1,7 +1,8 @@
 // Принимает уже надиктованный (не через сайт, а нативным "Dictate Text" в Shortcuts на
-// iPhone) текст и превращает его в задачи расписания — тем же самым разбором, что
-// используется в самом приложении при голосовом вводе (см. webapp/src/voiceParser.js,
-// импортируется отсюда напрямую, чтобы логика не расходилась в двух местах).
+// iPhone) текст и превращает его в задачи расписания — умным ИИ-разбором (см.
+// api/_lib/parseTasksAI.js, используется и здесь, и в api/parse-voice.js для голосового
+// ввода внутри самого приложения, чтобы логика не расходилась в двух местах). Если ИИ
+// недоступен — parseTasksSmart сама откатывается на разбор по правилам.
 //
 // Проверка личности — не через Telegram initData (Shortcuts не может его получить, это
 // не браузер внутри Telegram), а через личный токен из api/voice-token.js. Успешный запрос
@@ -11,7 +12,7 @@
 // не дожидаясь, пока откроется само приложение.
 
 import { redis } from "./_lib/redis.js";
-import { parseVoiceTasks } from "../webapp/src/voiceParser.js";
+import { parseTasksSmart } from "./_lib/parseTasksAI.js";
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MAX_SCHEDULE_ITEMS = 50;
@@ -54,7 +55,7 @@ export default async function handler(req, res) {
   }
 
   const clippedText = text.slice(0, MAX_TEXT_LENGTH);
-  const parsedTasks = parseVoiceTasks(clippedText);
+  const parsedTasks = await parseTasksSmart(clippedText);
 
   const existing = (await redis.get(`reminders:${chatId}`)) || {
     chatId: String(chatId),
